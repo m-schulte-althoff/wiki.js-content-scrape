@@ -159,10 +159,36 @@ def save_page(page: Page, url: str, out_dir: Path) -> Path:
     content_el = page.query_selector(".contents, .page-content, #page-content, article, main")
     html = content_el.inner_html() if content_el else page.content()
 
+    # Rewrite media references to point to local media/ folder
+    html = rewrite_media_paths(html, media_dir)
+
     html_path = page_dir / f"{safe_title}.html"
     html_path.write_text(html, encoding="utf-8")
     logger.info("Saved HTML → %s", html_path)
     return html_path
+
+
+def rewrite_media_paths(html: str, media_dir: Path) -> str:
+    """Rewrite src= and href= attributes in *html* to point to local media/ files.
+
+    For every ``src="/..."`` or ``href="/..."`` whose filename (after URL-decoding)
+    matches a file in *media_dir*, the attribute is rewritten to ``media/<filename>``.
+    """
+    local_files = {f.name for f in media_dir.iterdir()} if media_dir.exists() else set()
+    if not local_files:
+        return html
+
+    def _replace(m: re.Match[str]) -> str:
+        attr = m.group(1)       # src or href
+        raw_path = m.group(2)   # e.g. /screenshots/chart.png
+        # Decode URL-encoded characters and grab just the filename
+        decoded = urllib.parse.unquote(raw_path)
+        fname = _sanitize_filename(decoded.split("/")[-1])
+        if fname in local_files:
+            return f'{attr}="media/{fname}"'
+        return m.group(0)
+
+    return re.sub(r'(src|href)="(/[^"]+)"', _replace, html)
 
 
 def _download_media(page: Page, media_dir: Path) -> None:
